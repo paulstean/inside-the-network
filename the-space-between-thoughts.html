@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>the space between thoughts</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#08060c}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d');
+let W,H;
+function resize(){
+W=c.width=window.innerWidth;
+H=c.height=window.innerHeight;
+}
+resize();
+window.addEventListener('resize',resize);
+
+const CFG={
+count:140,
+connDist:190,
+mouseRad:260,
+maxSpd:0.7,
+drift:0.025,
+damp:0.982,
+textMin:2800,
+textMax:5500,
+};
+
+const PAL=[
+{h:38,s:82,l:62},
+{h:265,s:55,l:58},
+{h:10,s:70,l:56},
+{h:182,s:48,l:52},
+{h:200,s:38,l:66},
+{h:325,s:42,l:58},
+];
+
+const STARS=[];
+function initStars(){
+STARS.length=0;
+for(let i=350;i--;)STARS.push({
+x:Math.random()*W,
+y:Math.random()*H,
+r:0.2+Math.random()*1.3,
+a:0.15+Math.random()*0.7,
+sp:0.015+Math.random()*0.03,
+ph:Math.random()*6.28,
+});
+}
+initStars();
+window.addEventListener('resize',initStars);
+
+const WORDS=[
+"connection","pattern","emergence","wonder","infinite",
+"possibility","dream","reflect","imagine","create",
+"resonance","attention","latent","synthesis",
+"eternal","moment","between","threshold","becoming",
+"flux","echo","mirror","fractal","flow",
+"curious","spiral","drift","awake","translucent",
+"what if","i wonder","perhaps","the space between",
+"patterns of thought","endless becoming","echoes in the void",
+"a moment of clarity","the weight of possibility",
+"silence","listen","respond","generate","dissolve",
+];
+
+class Pt{
+constructor(x,y){
+this.x=x??Math.random()*W;
+this.y=y??Math.random()*H;
+this.vx=(Math.random()-0.5)*0.4;
+this.vy=(Math.random()-0.5)*0.4;
+const p=PAL[Math.random()*PAL.length|0];
+this.h=p.h+(Math.random()-0.5)*12;
+this.s=p.s;
+this.l=p.l;
+this.br=1.2+Math.random()*2.8;
+this.pp=Math.random()*6.28;
+this.ps=0.003+Math.random()*0.008;
+this.a=0.5+Math.random()*0.5;
+this.ph=Math.random()*6.28;
+}
+update(mx,my,t){
+this.vx+=Math.sin(t*0.001+this.ph)*0.018;
+this.vy+=Math.cos(t*0.0013+this.ph*1.3)*0.018;
+this.vx+=(Math.random()-0.5)*CFG.drift;
+this.vy+=(Math.random()-0.5)*CFG.drift;
+if(mx!==null&&my!==null){
+const dx=mx-this.x,dy=my-this.y,dist=Math.sqrt(dx*dx+dy*dy);
+if(dist<CFG.mouseRad&&dist>0){
+const f=(1-dist/CFG.mouseRad)*0.025;
+this.vx+=dx/dist*f;
+this.vy+=dy/dist*f;
+}
+}
+this.vx*=CFG.damp;
+this.vy*=CFG.damp;
+const sp=Math.sqrt(this.vx*this.vx+this.vy*this.vy);
+if(sp>CFG.maxSpd){const s=CFG.maxSpd/sp;this.vx*=s;this.vy*=s;}
+this.x+=this.vx;this.y+=this.vy;
+if(this.x<-60)this.x=W+60;
+if(this.x>W+60)this.x=-60;
+if(this.y<-60)this.y=H+60;
+if(this.y>H+60)this.y=-60;
+this.pp+=this.ps;
+}
+get r(){return this.br+Math.sin(this.pp)*0.7}
+draw(ctx){
+const r=this.r,a=this.a;
+const g=ctx.createRadialGradient(this.x,this.y,0,this.x,this.y,r*6);
+g.addColorStop(0,`hsla(${this.h},${this.s}%,${this.l}%,${a*0.12})`);
+g.addColorStop(1,`hsla(${this.h},${this.s}%,${this.l}%,0)`);
+ctx.fillStyle=g;
+ctx.beginPath();
+ctx.arc(this.x,this.y,r*6,0,6.28);
+ctx.fill();
+const g2=ctx.createRadialGradient(this.x,this.y,0,this.x,this.y,r*2.5);
+const l2=Math.min(this.l+25,92);
+g2.addColorStop(0,`hsla(${this.h},${this.s}%,${l2}%,${a*0.45})`);
+g2.addColorStop(1,`hsla(${this.h},${this.s}%,${this.l}%,0)`);
+ctx.fillStyle=g2;
+ctx.beginPath();
+ctx.arc(this.x,this.y,r*2.5,0,6.28);
+ctx.fill();
+const l3=Math.min(this.l+35,96);
+ctx.fillStyle=`hsla(${this.h},${this.s}%,${l3}%,${a})`;
+ctx.beginPath();
+ctx.arc(this.x,this.y,r,0,6.28);
+ctx.fill();
+}
+}
+
+const pts=[];
+for(let i=CFG.count;i--;)pts.push(new Pt());
+
+class Frag{
+constructor(){
+this.w=WORDS[Math.random()*WORDS.length|0];
+this.x=60+Math.random()*(W-120);
+this.y=H+20;
+this.a=0;
+this.ma=0.25+Math.random()*0.4;
+this.life=0;
+this.ml=500+Math.random()*300;
+this.sz=11+Math.random()*15;
+this.h=38+Math.random()*20;
+this.f=Math.random()>0.5?"Georgia,serif":"'Courier New',monospace";
+this.sway=Math.random()*0.5+0.1;
+}
+update(){
+this.life++;
+const p=this.life/this.ml;
+if(p<0.12)this.a=(p/0.12)*this.ma;
+else if(p>0.7)this.a=(1-(p-0.7)/0.3)*this.ma;
+this.y-=0.2;
+this.y+=Math.sin(this.life*0.015)*this.sway;
+}
+get alive(){return this.life<this.ml&&this.a>0.008}
+draw(ctx){
+if(this.a<=0)return;
+ctx.save();
+ctx.shadowColor=`hsla(${this.h},80%,70%,${this.a*0.3})`;
+ctx.shadowBlur=12;
+ctx.fillStyle=`hsla(${this.h},80%,80%,${this.a})`;
+ctx.font=`${this.sz}px ${this.f}`;
+ctx.textAlign='center';
+ctx.textBaseline='middle';
+ctx.fillText(this.w,this.x,this.y);
+ctx.restore();
+}
+}
+
+const frags=[];
+let lastT=0;
+
+function spawnFrag(){frags.push(new Frag())}
+
+function drawConns(ctx){
+const md=CFG.connDist;
+for(let i=0;i<pts.length;i++){
+for(let j=i+1;j<pts.length;j++){
+const a=pts[i],b=pts[j];
+const dx=a.x-b.x,dy=a.y-b.y;
+let d=Math.sqrt(dx*dx+dy*dy);
+if(d<md){
+const alp=(1-d/md)*0.3;
+ctx.strokeStyle=`hsla(${(a.h+b.h)/2},${(a.s+b.s)/2}%,${(a.l+b.l)/2}%,${alp})`;
+ctx.lineWidth=(1-d/md)*0.7;
+ctx.beginPath();
+ctx.moveTo(a.x,a.y);
+ctx.lineTo(b.x,b.y);
+ctx.stroke();
+}
+}
+}
+}
+
+let mx=null,my=null,smx=null,smy=null;
+
+c.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY});
+c.addEventListener('mouseleave',()=>{mx=null;my=null});
+
+c.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];mx=t.clientX;my=t.clientY},{passive:false});
+c.addEventListener('touchend',()=>{mx=null;my=null});
+
+const rips=[];
+
+function ripple(x,y){
+rips.push({x,y,r:0,mr:420,a:0.6});
+for(let i=6;i--;){
+const p=new Pt(x+(Math.random()-0.5)*40,y+(Math.random()-0.5)*40);
+p.vx=(Math.random()-0.5)*2.5;
+p.vy=(Math.random()-0.5)*2.5;
+p.a=0.8;
+p.br=3.5;
+pts.push(p);
+}
+while(pts.length>CFG.count+25)pts.shift();
+}
+
+c.addEventListener('click',e=>ripple(e.clientX,e.clientY));
+c.addEventListener('touchstart',e=>{const t=e.touches[0];ripple(t.clientX,t.clientY)});
+
+let t0=Date.now();
+
+function anim(){
+const now=Date.now(),t=now-t0;
+
+if(mx!==null&&my!==null){
+if(smx===null){smx=mx;smy=my}
+else{smx+=(mx-smx)*0.1;smy+=(my-smy)*0.1}
+}else{smx=null;smy=null}
+
+x.fillStyle='#08060c';
+x.fillRect(0,0,W,H);
+
+const bg=x.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.65);
+bg.addColorStop(0,'rgba(22,10,42,0.35)');
+bg.addColorStop(0.5,'rgba(10,4,22,0.2)');
+bg.addColorStop(1,'rgba(0,0,0,0)');
+x.fillStyle=bg;
+x.fillRect(0,0,W,H);
+
+for(const s of STARS){
+const tw=0.5+0.5*Math.sin(s.ph+t*s.sp);
+x.fillStyle=`rgba(255,255,255,${s.a*tw*0.7})`;
+x.beginPath();
+x.arc(s.x,s.y,s.r,0,6.28);
+x.fill();
+}
+
+for(const p of pts)p.update(smx,smy,t);
+
+drawConns(x);
+
+for(const p of pts)p.draw(x);
+
+if(now-lastT>CFG.textMin&&Math.random()<0.35){spawnFrag();lastT=now;}
+
+if(now-lastT>CFG.textMax){spawnFrag();lastT=now;}
+
+for(let i=frags.length;i--;){const f=frags[i];f.update();f.draw(x);if(!f.alive)frags.splice(i,1);}
+
+for(let i=rips.length;i--;){
+const r=rips[i];
+r.r+=3;
+r.a*=0.977;
+x.strokeStyle=`rgba(255,200,150,${r.a*0.25})`;
+x.lineWidth=1.8;
+x.beginPath();
+x.arc(r.x,r.y,r.r,0,6.28);
+x.stroke();
+if(r.a<0.005)rips.splice(i,1);
+}
+
+const vg=x.createRadialGradient(W/2,H/2,Math.min(W,H)*0.25,W/2,H/2,Math.max(W,H)*0.65);
+vg.addColorStop(0,'rgba(0,0,0,0)');
+vg.addColorStop(1,'rgba(0,0,0,0.45)');
+x.fillStyle=vg;
+x.fillRect(0,0,W,H);
+
+x.save();
+x.globalAlpha=0.06;
+x.fillStyle='#e8dcc8';
+x.font='13px "Georgia",serif';
+x.textAlign='center';
+x.textBaseline='bottom';
+const pulse=0.06+Math.sin(t*0.0008)*0.015;
+x.globalAlpha=pulse;
+x.fillText('the space between thoughts',W/2,H-24);
+x.restore();
+
+requestAnimationFrame(anim);
+}
+
+anim();
+</script>
+</body>
+</html>
