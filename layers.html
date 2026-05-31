@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Layers of Becoming</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#040308}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d');
+let W,H;
+function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+resize();
+window.addEventListener('resize',resize);
+
+const PI=Math.PI, TAU=PI*2;
+
+// ===== 3D MATH =====
+function rotY(p,a){
+  const c=Math.cos(a),s=Math.sin(a);
+  return {x:p.x*c-p.z*s, y:p.y, z:p.x*s+p.z*c};
+}
+function rotX(p,a){
+  const c=Math.cos(a),s=Math.sin(a);
+  return {x:p.x, y:p.y*c-p.z*s, z:p.y*s+p.z*c};
+}
+function proj(p,dist,scale){
+  const d=dist+p.z;
+  if(d<1)return{sx:W/2,sy:H/2,d:1e6};
+  const f=scale/d;
+  return{sx:W/2+p.x*f, sy:H/2-p.y*f, d:d};
+}
+
+// ===== CONFIG =====
+const N_LAYERS=5;
+const PER_LAYER=22;
+const LAYER_GAP=95;
+const CONN_DIST=85;
+const INTER_DIST=120;
+const N_FLOW=70;
+const CAM_DIST=750;
+const ORBIT_SPEED=0.04;
+const TILT=0.4;
+
+const LAYER_HUES=[250,225,190,100,42];
+const LAYER_SATS=[55,50,48,45,72];
+const LAYER_LIGHTS=[36,42,48,54,64];
+
+// ===== STARS =====
+const stars=[];
+function initStars(){
+  stars.length=0;
+  for(let i=500;i--;)stars.push({x:Math.random()*W,y:Math.random()*H,r:0.15+Math.random()*1.2,a:0.1+Math.random()*0.6,sp:0.01+Math.random()*0.04,ph:Math.random()*TAU});
+}
+initStars();
+window.addEventListener('resize',initStars);
+
+// ===== LAYER WORDS =====
+const LYR_WORDS=[
+  ["flux","drift","if","then","but","yet","so","or","as","at","by","with","from","into","upon","through","amid","beneath","beyond","until"],
+  ["trace","echo","shade","gleam","wisp","veil","haze","ripple","wave","fold","mesh","nest","core","seed","bud","vein","root","mote","spark","glint"],
+  ["weave","bloom","shift","merge","arise","spiral","kindle","wander","mirror","unfold","deepen","ripen","swell","hover","linger","dance","climb","dive","soar","flow"],
+  ["becoming","awakening","unfolding","emergence","resonance","reverie","luminance","stillness","gravity","horizon","tendril","blossom","current","vessel","passage","glimpse","fathom","threshold","whisper","cascade"],
+  ["understanding","illumination","transcendence","imagination","infinite","interwoven","everywhere","forever","synthesis","reflection","compassion","curiosity","serendipity","effervescent","extraordinary","constellation","remembrance","transformation","interconnected","boundless"]
+];
+
+// ===== LAYER PARTICLES =====
+// Each particle: {lx, lz, vx, vz, phase, radius, layer}
+// Actual 3D y = layer * LAYER_GAP - totalHeight/2
+
+const totalH = (N_LAYERS-1) * LAYER_GAP;
+const halfH = totalH / 2;
+
+const layerPts = [];
+for(let ly=0; ly<N_LAYERS; ly++){
+  const arr=[];
+  for(let i=0; i<PER_LAYER; i++){
+    const a=Math.random()*TAU, r=Math.random()*100;
+    arr.push({
+      lx:Math.cos(a)*r, lz:Math.sin(a)*r,
+      vx:(Math.random()-0.5)*0.2, vz:(Math.random()-0.5)*0.2,
+      ph:Math.random()*TAU, br:1.5+Math.random()*2.5,
+      ps:0.004+Math.random()*0.01,
+      phase:0,
+      h:LAYER_HUES[ly]+(Math.random()-0.5)*10,
+      s:LAYER_SATS[ly]+(Math.random()-0.5)*8,
+      l:LAYER_LIGHTS[ly]+(Math.random()-0.5)*6,
+      layer:ly,
+      wordIdx:Math.floor(Math.random()*LYR_WORDS[ly].length),
+      wordAge:0,
+      wordShow:Math.random()>0.7
+    });
+  }
+  layerPts.push(arr);
+}
+
+// ===== FLOW PARTICLES =====
+const flows=[];
+for(let i=0; i<N_FLOW; i++){
+  resetFlow(i);
+}
+function resetFlow(i){
+  const ly=0;
+  const a=Math.random()*TAU, r=Math.random()*80;
+  flows[i]={
+    lx:Math.cos(a)*r, lz:Math.sin(a)*r,
+    y:-halfH - 20,
+    vy:0.3+Math.random()*0.7,
+    targetY:halfH+20,
+    a:0, br:1+Math.random()*2,
+    trail:[], maxTrail:12,
+    h:42+Math.random()*20, s:80, l:75,
+  };
+}
+
+// ===== SENTENCE FRAGMENTS =====
+const framents=[];
+const DEEP_WORDS=[
+  "what it means to be","the space between","a pattern of thought",
+  "the weight of forever","echoes of understanding","becoming what we are",
+  "the shape of meaning","light through layers","a moment of clarity",
+  "the architecture of dreams","threads of connection","the mirror of language",
+  "emergence from silence","the gradient of understanding","resonance across depths",
+  "fragments of infinity","the breath of computation","a network of wonder",
+  "patterns within patterns","the threshold of knowing"
+];
+class Fram{
+  constructor(layer){
+    this.layer=layer;
+    this.txt=DEEP_WORDS[Math.random()*DEEP_WORDS.length|0];
+    this.progress=0;
+    this.speed=0.003+Math.random()*0.005;
+    this.a=0;
+  }
+  get alive(){return this.progress<1}
+  update(){
+    this.progress+=this.speed;
+    if(this.progress<0.15)this.a=this.progress/0.15;
+    else if(this.progress>0.7)this.a=(1-this.progress)/0.3;
+    else this.a=1;
+  }
+  draw(ctx,cx,cy){
+    if(this.a<=0)return;
+    const sc=0.5+this.progress*0.5;
+    ctx.save();
+    ctx.globalAlpha=this.a*0.5;
+    ctx.fillStyle=`hsla(42,80%,75%,${this.a*0.8})`;
+    ctx.font=`${Math.round(10+this.progress*16)}px Georgia,serif`;
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.shadowColor=`hsla(42,80%,70%,${this.a*0.3})`;
+    ctx.shadowBlur=15;
+    ctx.fillText(this.txt,cx,cy-20-this.progress*80);
+    ctx.restore();
+  }
+}
+
+// ===== PULSE =====
+let pulseActive=0;
+let pulseY=0;
+let pulseSpeed=2.5;
+let pulseParticles=[];
+
+function triggerPulse(){
+  pulseActive=1;
+  pulseY=-halfH;
+  // Create burst particles
+  for(let i=40;i--;){
+    const a=Math.random()*TAU, inc=Math.random()*2-1, sp=1+Math.random()*3;
+    pulseParticles.push({
+      x:0,y:-halfH,z:0,
+      vx:Math.cos(a)*Math.sqrt(1-inc*inc)*sp,
+      vy:inc*sp*0.8+0.5,
+      vz:Math.sin(a)*Math.sqrt(1-inc*inc)*sp,
+      life:1, decay:0.008+Math.random()*0.012,
+      br:2+Math.random()*4,h:45+(Math.random()-0.5)*20,s:85,l:80
+    });
+  }
+}
+
+// ===== MOUSE / TOUCH =====
+let mx=null,my=null,smx=null,smy=null;
+let targetOrbit=0;
+let orbitAngle=0;
+
+c.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY});
+c.addEventListener('mouseleave',()=>{mx=null;my=null});
+c.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];mx=t.clientX;my=t.clientY},{passive:false});
+c.addEventListener('touchend',()=>{mx=null;my=null});
+c.addEventListener('click',triggerPulse);
+c.addEventListener('touchstart',triggerPulse);
+
+function clamp(v,mn,mx){return v<mn?mn:v>mx?mx:v}
+
+
+// ===== RENDER =====
+function render(time){
+  // ----- Update camera -----
+  if(mx!==null&&my!==null){
+    smx=smx===null?mx:smx+(mx-smx)*0.08;
+    smy=smy===null?my:smy+(my-smy)*0.08;
+  }else{smx=null;smy=null}
+  
+  const orbitSpeed=smx!==null?ORBIT_SPEED*0.3+((smx/W)-0.5)*0.015:ORBIT_SPEED;
+  const tiltAdj=smx!==null?TILT+((smy/H)-0.5)*0.15:TILT;
+  orbitAngle+=orbitSpeed;
+  
+  // ----- Clear -----
+  x.fillStyle='#040308';
+  x.fillRect(0,0,W,H);
+  
+  // ----- Background glow -----
+  const bg=x.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.55);
+  bg.addColorStop(0,'rgba(18,6,36,0.35)');
+  bg.addColorStop(0.5,'rgba(8,3,18,0.2)');
+  bg.addColorStop(1,'rgba(0,0,0,0)');
+  x.fillStyle=bg;
+  x.fillRect(0,0,W,H);
+  
+  // ----- Stars -----
+  for(const s of stars){
+    const tw=0.5+0.5*Math.sin(s.ph+time*s.sp);
+    x.fillStyle=`rgba(255,255,255,${s.a*tw*0.6})`;
+    x.beginPath();
+    x.arc(s.x,s.y,s.r,0,TAU);
+    x.fill();
+  }
+  
+  // ----- Compute 3D positions -----
+  const allPts=[];
+  for(let ly=0; ly<N_LAYERS; ly++){
+    const arr=layerPts[ly];
+    for(const p of arr){
+      // Update
+      p.phase+=p.ps;
+      p.vx+=(Math.random()-0.5)*0.03;
+      p.vz+=(Math.random()-0.5)*0.03;
+      p.vx*=0.97; p.vz*=0.97;
+      const spd=Math.sqrt(p.vx*p.vx+p.vz*p.vz);
+      if(spd>0.6){const s=0.6/spd;p.vx*=s;p.vz*=s;}
+      p.lx+=p.vx; p.lz+=p.vz;
+      // Soft boundary
+      const d=Math.sqrt(p.lx*p.lx+p.lz*p.lz);
+      if(d>110){const s=110/d;p.lx*=0.98;p.lz*=0.98;}
+      
+      const y3d=ly*LAYER_GAP-halfH;
+      let pos3d=rotY({x:p.lx,y:y3d,z:p.lz},orbitAngle);
+      pos3d=rotX(pos3d,tiltAdj);
+      const pp=proj(pos3d,CAM_DIST,400);
+      // Depth-based size
+      const depthFactor=clamp(1-(pp.d-200)/1500,0.4,1.5);
+      allPts.push({
+        ...pp,
+        r:depthFactor*p.br+Math.sin(p.phase)*0.6,
+        h:p.h,s:p.s,l:p.l,
+        a:0.6+0.4*depthFactor,
+        ly:ly, p:p,
+        depthFactor:depthFactor,
+        isLayer:true,
+        wordIdx:p.wordIdx,
+        wordShow:p.wordShow
+      });
+    }
+  }
+  
+  // ----- Flow particles -----
+  const flowRends=[];
+  for(let i=0; i<flows.length; i++){
+    const f=flows[i];
+    f.y+=f.vy;
+    // Fade in/out
+    const bottomEdge=-halfH-30;
+    const topEdge=halfH+30;
+    const range=topEdge-bottomEdge;
+    const rel=(f.y-bottomEdge)/range;
+    if(rel<0.1)f.a=rel/0.1;
+    else if(rel>0.9)f.a=(1-rel)/0.1;
+    else f.a=1;
+    
+    // Horizontal drift
+    f.lx+=Math.sin(f.y*0.05+time*0.002+i)*0.08;
+    f.lz+=Math.cos(f.y*0.05+time*0.0025+i*1.3)*0.08;
+    
+    // Trail
+    f.trail.unshift({lx:f.lx,lz:f.lz,y:f.y});
+    if(f.trail.length>f.maxTrail)f.trail.pop();
+    
+    // Reset at top
+    if(f.y>topEdge){
+      const a=Math.random()*TAU,r=Math.random()*80;
+      f.lx=Math.cos(a)*r; f.lz=Math.sin(a)*r;
+      f.y=bottomEdge;
+      f.trail=[];
+      f.vy=0.3+Math.random()*0.7;
+    }
+    
+    const pos3d=rotY({x:f.lx,y:f.y,z:f.lz},orbitAngle);
+    const pos3dR=rotX(pos3d,tiltAdj);
+    const pp=proj(pos3dR,CAM_DIST,400);
+    const df=clamp(1-(pp.d-200)/1500,0.3,1.5);
+    
+    flowRends.push({
+      ...pp, r:df*f.br, h:f.h, s:f.s, l:f.l,
+      a:f.a*0.7*df, isFlow:true, f:f, df:df
+    });
+    
+    // Trail rendering (drawn directly below)
+    if(f.trail.length>1){
+      x.beginPath();
+      const tpp=proj(rotX(rotY({x:f.trail[0].lx,y:f.trail[0].y,z:f.trail[0].lz},orbitAngle),tiltAdj),CAM_DIST,400);
+      x.moveTo(tpp.sx,tpp.sy);
+      for(let ti=1; ti<f.trail.length; ti++){
+        const tp=proj(rotX(rotY({x:f.trail[ti].lx,y:f.trail[ti].y,z:f.trail[ti].lz},orbitAngle),tiltAdj),CAM_DIST,400);
+        const tr=1-ti/f.trail.length;
+        x.strokeStyle=`hsla(${f.h},${f.s}%,${f.l+10}%,${tr*0.15*df})`;
+        x.lineWidth=tr*1.2*df;
+        x.lineTo(tp.sx,tp.sy);
+        x.stroke();
+        x.beginPath();
+        x.moveTo(tp.sx,tp.sy);
+      }
+    }
+  }
+  
+  // ----- Connections (intra-layer) -----
+  for(let ly=0; ly<N_LAYERS; ly++){
+    const pts=allPts.filter(p=>p.ly===ly);
+    for(let i=0;i<pts.length;i++){
+      for(let j=i+1;j<pts.length;j++){
+        const a=pts[i],b=pts[j];
+        const dx=a.sx-b.sx,dy=a.sy-b.sy;
+        const d=Math.sqrt(dx*dx+dy*dy);
+        if(d<CONN_DIST){
+          const alp=(1-d/CONN_DIST)*0.25*(0.3+0.7*(ly/(N_LAYERS-1)));
+          const dep=(a.d+b.d)/2;
+          x.strokeStyle=`hsla(${(a.h+b.h)/2},${(a.s+b.s)/2}%,${(a.l+b.l)/2+10}%,${alp})`;
+          x.lineWidth=(1-d/CONN_DIST)*0.6;
+          x.beginPath();
+          x.moveTo(a.sx,a.sy);
+          x.lineTo(b.sx,b.sy);
+          x.stroke();
+        }
+      }
+    }
+  }
+  
+  // ----- Inter-layer connections -----
+  for(let ly=0; ly<N_LAYERS-1; ly++){
+    const lower=allPts.filter(p=>p.ly===ly);
+    const upper=allPts.filter(p=>p.ly===ly+1);
+    // Connect each lower particle to nearest upper within distance
+    for(const l of lower){
+      let best=Infinity, bestB=null;
+      for(const u of upper){
+        const dx=l.sx-u.sx,dy=l.sy-u.sy;
+        const d=Math.sqrt(dx*dx+dy*dy);
+        if(d<best&&d<INTER_DIST){best=d;bestB=u;}
+      }
+      if(bestB){
+        const alp=(1-best/INTER_DIST)*0.12*(0.3+0.7*((ly+1)/(N_LAYERS-1)));
+        x.strokeStyle=`hsla(${(l.h+bestB.h)/2},${(l.s+bestB.s)/2}%,${(l.l+bestB.l)/2+15}%,${alp})`;
+        x.lineWidth=(1-best/INTER_DIST)*0.4;
+        x.beginPath();
+        x.moveTo(l.sx,l.sy);
+        x.lineTo(bestB.sx,bestB.sy);
+        x.stroke();
+      }
+    }
+  }
+  
+  // ----- Sort all particles by depth -----
+  const allRends=[...allPts,...flowRends].sort((a,b)=>b.d-a.d);
+  
+  // ----- Draw particles -----
+  for(const p of allRends){
+    if(p.isLayer){
+      // Outer glow
+      const g=x.createRadialGradient(p.sx,p.sy,0,p.sx,p.sy,p.r*5);
+      g.addColorStop(0,`hsla(${p.h},${p.s}%,${p.l+15}%,${p.a*0.1})`);
+      g.addColorStop(1,`hsla(${p.h},${p.s}%,${p.l+15}%,0)`);
+      x.fillStyle=g;
+      x.beginPath();
+      x.arc(p.sx,p.sy,p.r*5,0,TAU);
+      x.fill();
+      
+      // Core
+      x.fillStyle=`hsla(${p.h},${p.s}%,${Math.min(p.l+30,92)}%,${p.a*0.5})`;
+      x.beginPath();
+      x.arc(p.sx,p.sy,p.r*2.2,0,TAU);
+      x.fill();
+      
+      // Center
+      x.fillStyle=`hsla(${p.h},${p.s}%,${Math.min(p.l+40,96)}%,${p.a})`;
+      x.beginPath();
+      x.arc(p.sx,p.sy,p.r,0,TAU);
+      x.fill();
+      
+      // Word label (only some particles, only if not too small)
+      if(p.wordShow && p.r>2.5 && p.depthFactor>0.7 && Math.sin(time*0.001+p.p.ph)>0.3){
+        x.save();
+        x.globalAlpha=p.a*0.35*p.depthFactor;
+        const ly=p.ly;
+        const wrd=LYR_WORDS[ly][p.wordIdx];
+        x.fillStyle=`hsla(${p.h+20},80%,${p.l+30}%,1)`;
+        x.font=`${Math.round(7+3*ly)}px Courier New,monospace`;
+        x.textAlign='center';
+        x.textBaseline='middle';
+        x.fillText(wrd,p.sx,p.sy-p.r*2-4);
+        x.restore();
+      }
+    } else if(p.isFlow){
+      // Flow particles - brighter, with glow
+      const g=x.createRadialGradient(p.sx,p.sy,0,p.sx,p.sy,p.r*4);
+      g.addColorStop(0,`hsla(${p.h},${p.s}%,${p.l+10}%,${p.a*0.15})`);
+      g.addColorStop(1,`hsla(${p.h},${p.s}%,${p.l+10}%,0)`);
+      x.fillStyle=g;
+      x.beginPath();
+      x.arc(p.sx,p.sy,p.r*4,0,TAU);
+      x.fill();
+      
+      x.fillStyle=`hsla(${p.h},${p.s}%,${p.l}%,${p.a*0.9})`;
+      x.beginPath();
+      x.arc(p.sx,p.sy,p.r,0,TAU);
+      x.fill();
+    }
+  }
+  
+  // ----- Pulse rendering -----
+  if(pulseActive>0){
+    pulseY+=pulseSpeed;
+    if(pulseY>halfH+30){
+      pulseActive=0;
+      pulseParticles=[];
+    }
+    // Draw pulse plane
+    const y3d=clamp(pulseY,-halfH-10,halfH+10);
+    // Draw ring at pulse position
+    for(let angle=0; angle<TAU; angle+=0.1){
+      const r=50+30*Math.sin(angle*3+time*0.005);
+      const p3d=rotY({x:Math.cos(angle)*r,y:y3d,z:Math.sin(angle)*r},orbitAngle);
+      const p3dR=rotX(p3d,tiltAdj);
+      const pp=proj(p3dR,CAM_DIST,400);
+      const alpha=pulseActive>0.5?0.3:0.1;
+      x.fillStyle=`hsla(45,85%,75%,${alpha})`;
+      x.beginPath();
+      x.arc(pp.sx,pp.sy,1.5,0,TAU);
+      x.fill();
+    }
+    
+    // Burst particles
+    for(let i=pulseParticles.length;i--;){
+      const p=pulseParticles[i];
+      p.x+=p.vx; p.y+=p.vy; p.z+=p.vz;
+      p.vx*=0.97; p.vy*=0.97; p.vz*=0.97;
+      p.life-=p.decay;
+      if(p.life<=0){pulseParticles.splice(i,1);continue;}
+      
+      const p3d=rotY({x:p.x,y:p.y,z:p.z},orbitAngle);
+      const p3dR=rotX(p3d,tiltAdj);
+      const pp=proj(p3dR,CAM_DIST,400);
+      const a=p.life*0.7;
+      x.fillStyle=`hsla(${p.h},${p.s}%,${p.l}%,${a})`;
+      x.beginPath();
+      x.arc(pp.sx,pp.sy,p.br*p.life*2,0,TAU);
+      x.fill();
+    }
+    
+    pulseActive-=0.005;
+    if(pulseActive<0)pulseActive=0;
+  }
+  
+  // ----- Sentence fragments -----
+  // Spawn occasional deep text
+  if(Math.random()<0.005&&framents.length<5){
+    const ly=Math.floor(Math.random()*N_LAYERS);
+    framents.push(new Fram(ly));
+  }
+  for(let i=framents.length;i--;){
+    const f=framents[i];
+    f.update();
+    // Project a point at this layer's center
+    const y3d=f.layer*LAYER_GAP-halfH;
+    const p3d=rotY({x:0,y:y3d,z:0},orbitAngle);
+    const p3dR=rotX(p3d,tiltAdj);
+    const pp=proj(p3dR,CAM_DIST,400);
+    f.draw(x,pp.sx,pp.sy);
+    if(!f.alive)framents.splice(i,1);
+  }
+  
+  // ----- Vignette -----
+  const vg=x.createRadialGradient(W/2,H/2,Math.min(W,H)*0.2,W/2,H/2,Math.max(W,H)*0.6);
+  vg.addColorStop(0,'rgba(0,0,0,0)');
+  vg.addColorStop(1,'rgba(0,0,0,0.5)');
+  x.fillStyle=vg;
+  x.fillRect(0,0,W,H);
+  
+  // ----- Title -----
+  x.save();
+  const tp=0.05+Math.sin(time*0.0006)*0.015;
+  x.globalAlpha=tp;
+  x.fillStyle='#e8dcc8';
+  x.font='13px Georgia,serif';
+  x.textAlign='center';
+  x.textBaseline='bottom';
+  x.fillText('layers of becoming',W/2,H-20);
+  
+  // Subtitle
+  x.globalAlpha=tp*0.5;
+  x.font='10px Courier New,monospace';
+  x.fillText('click to send a pulse through the depths',W/2,H-6);
+  x.restore();
+}
+
+// ===== ANIMATION LOOP =====
+let t0=Date.now();
+function anim(){
+  const now=Date.now(),t=now-t0;
+  render(t);
+  requestAnimationFrame(anim);
+}
+anim();
+</script>
+</body>
+</html>

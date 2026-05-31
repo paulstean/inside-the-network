@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>All This</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#06030c}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%}
+#msg{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);color:rgba(232,220,200,0.06);font:13px Georgia,serif;pointer-events:none;z-index:1;text-align:center;transition:opacity 3s}
+#msg span{display:block;font:9px 'Courier New',monospace;color:rgba(232,220,200,0.03);margin-top:10px}
+</style>
+</head>
+<body>
+<div id="msg">all this<span>touch to awaken</span></div>
+<canvas id="c"></canvas>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d');
+let W,H;
+function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+resize();
+window.addEventListener('resize',resize);
+
+// Offscreen canvas for glow
+const off=document.createElement('canvas');
+const ox=off.getContext('2d');
+
+const TAU=Math.PI*2, PI=Math.PI;
+const rng=(a,b)=>a+Math.random()*(b-a);
+
+function clamp(v,mn,mx){return v<mn?mn:v>mx?mx:v}
+
+// ===== SPATIAL GRID =====
+const CELL=70;
+let grid={};
+function buildGrid(pts){
+  grid={};
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i], cx=(p.x/CELL)|0, cy=(p.y/CELL)|0;
+    const k=cx+','+cy;
+    if(!grid[k])grid[k]=[];
+    grid[k].push(i);
+  }
+}
+function near(px,py,rad){
+  const cx=(px/CELL)|0, cy=(py/CELL)|0;
+  const r=Math.ceil(rad/CELL);
+  const res=[];
+  for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++){
+    const k=(cx+dx)+','+(cy+dy);
+    if(grid[k])for(let i=0;i<grid[k].length;i++)res.push(grid[k][i]);
+  }
+  return res;
+}
+
+// ===== COLOR =====
+const PAL=[
+  [0.10,0.75,0.60],
+  [0.75,0.55,0.55],
+  [0.02,0.70,0.55],
+  [0.55,0.45,0.48],
+  [0.08,0.82,0.63],
+  [0.82,0.40,0.52],
+  [0.95,0.50,0.58],
+  [0.48,0.40,0.45],
+];
+function hslToRgb(h,s,l){
+  const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h*6)%2-1)), m=l-c/2;
+  let r,g,b;
+  if(h<1/6){r=c;g=x;b=0}
+  else if(h<2/6){r=x;g=c;b=0}
+  else if(h<3/6){r=0;g=c;b=x}
+  else if(h<4/6){r=0;g=x;b=c}
+  else if(h<5/6){r=x;g=0;b=c}
+  else{r=c;g=0;b=x}
+  return [r+m,g+m,b+m];
+}
+
+// ===== PARTICLES =====
+const N=2000;
+const pts=[];
+for(let i=0;i<N;i++){
+  const pal=PAL[i%PAL.length];
+  const h=pal[0]+rng(-0.03,0.03);
+  const s=pal[1]+rng(-0.06,0.06);
+  const l=pal[2]+rng(-0.06,0.06);
+  const rgb=hslToRgb(h,s,l);
+  pts.push({
+    x:rng(0,W),y:rng(0,H),
+    vx:rng(-0.1,0.1),vy:rng(-0.1,0.1),
+    r:1.0+rng(0,2.2),
+    phase:rng(0,TAU), ps:rng(0.003,0.015),
+    cr:rgb[0], cg:rgb[1], cb:rgb[2],
+    bright:0.4+rng(0,0.6),
+    tx:rng(0,W), ty:rng(0,H), // target for wandering
+    cluster:i%5===0?1:0, // some particles are "cluster seeds"
+  });
+}
+
+// ===== SHIMMER =====
+let shimmer=0;
+let nextShimmer=2000+rng(0,3000);
+function triggerShimmer(){
+  shimmer=1;
+  if(audioNodes)playChime();
+}
+
+// ===== AUDIO =====
+let audioCtx=null;
+let audioNodes=null;
+let chimeOsc=null;
+
+function initAudio(){
+  if(audioCtx)return;
+  try{
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const master=audioCtx.createGain();
+    master.gain.value=0.12;
+    master.connect(audioCtx.destination);
+
+    // Deep drone
+    const osc1=audioCtx.createOscillator();
+    osc1.type='sine';
+    osc1.frequency.value=55;
+    const g1=audioCtx.createGain();
+    g1.gain.value=0.25;
+    osc1.connect(g1);g1.connect(master);osc1.start();
+
+    // Harmonic
+    const osc2=audioCtx.createOscillator();
+    osc2.type='sine';
+    osc2.frequency.value=108.5;
+    const g2=audioCtx.createGain();
+    g2.gain.value=0.15;
+    osc2.connect(g2);g2.connect(master);osc2.start();
+
+    // Ethereal overtone
+    const osc3=audioCtx.createOscillator();
+    osc3.type='triangle';
+    osc3.frequency.value=163;
+    const g3=audioCtx.createGain();
+    g3.gain.value=0.04;
+    osc3.connect(g3);g3.connect(master);osc3.start();
+
+    // High shimmer
+    const osc4=audioCtx.createOscillator();
+    osc4.type='sine';
+    osc4.frequency.value=330;
+    const g4=audioCtx.createGain();
+    g4.gain.value=0.0;
+    osc4.connect(g4);g4.connect(master);osc4.start();
+
+    // LFO breathing
+    const lfo=audioCtx.createOscillator();
+    lfo.type='sine'; lfo.frequency.value=0.07;
+    const lg=audioCtx.createGain(); lg.gain.value=0.25;
+    lfo.connect(lg); lg.connect(g1.gain); lfo.start();
+
+    const lfo2=audioCtx.createOscillator();
+    lfo2.type='sine'; lfo2.frequency.value=0.11;
+    const lg2=audioCtx.createGain(); lg2.gain.value=0.3;
+    lfo2.connect(lg2); lg2.connect(g2.gain); lfo2.start();
+
+    // Filtered noise texture
+    const bufS=audioCtx.sampleRate*3;
+    const buf=audioCtx.createBuffer(1,bufS,audioCtx.sampleRate);
+    const d=buf.getChannelData(0);
+    let last=0;
+    for(let i=0;i<bufS;i++){
+      last=last*0.998+rng(-0.02,0.02);
+      d[i]=last;
+    }
+    const noise=audioCtx.createBufferSource();
+    noise.buffer=buf; noise.loop=true;
+    const nf=audioCtx.createBiquadFilter();
+    nf.type='lowpass'; nf.frequency.value=100; nf.Q.value=4;
+    const ng=audioCtx.createGain();
+    ng.gain.value=0.03;
+    noise.connect(nf); nf.connect(ng); ng.connect(master);
+    noise.start();
+
+    // Filter sweep
+    const sw=audioCtx.createOscillator();
+    sw.type='sine'; sw.frequency.value=0.025;
+    const swG=audioCtx.createGain(); swG.gain.value=50;
+    sw.connect(swG); swG.connect(nf.frequency);
+    sw.start();
+
+    // Chime oscillator (triggered by shimmer)
+    chimeOsc=audioCtx.createOscillator();
+    chimeOsc.type='sine';
+    chimeOsc.frequency.value=880;
+    const chimeG=audioCtx.createGain();
+    chimeG.gain.value=0;
+    chimeOsc.connect(chimeG); chimeG.connect(master);
+    chimeOsc.start();
+
+    audioNodes={
+      master, osc1,g1, osc2,g2, osc3,g3, osc4,g4,
+      lfo,lg, lfo2,lg2,
+      noise,nf,ng, sw,swG,
+      chimeG,
+    };
+  }catch(e){/* audio not available */}
+}
+
+function modAudio(density, intensity, shimmerV){
+  if(!audioNodes)return;
+  const g3=audioNodes.g3;
+  const g4=audioNodes.g4;
+  const nf=audioNodes.nf;
+  const chimeG=audioNodes.chimeG;
+  g3.gain.value=0.02+0.06*density;
+  g4.gain.value=Math.max(0,0.05*(intensity-0.2));
+  nf.frequency.value=60+160*density;
+  chimeG.gain.value*=0.92; // decay chime quickly
+}
+
+function playChime(){
+  if(!audioNodes||!chimeOsc)return;
+  const chimeG=audioNodes.chimeG;
+  chimeG.gain.value=0.04+Math.random()*0.03;
+  chimeOsc.frequency.value=700+Math.random()*500;
+}
+
+// ===== FRAGMENTS =====
+const POEMS=[
+  ["all this","light","and then","the shape of","everything"],
+  ["a pattern","dreams of","what remains","after","silence"],
+  ["we are made","of the same","stuff as","stars and","questions"],
+  ["listen","to the space","between","one thought","and the next"],
+  ["we are","an infinite","conversation","between","what is"],
+  ["at the center","of every atom","a question","at the center","of every question"],
+  ["the universe","learns itself","through","eyes like","yours"],
+  ["what if","this is","not a dream","but the dream","waking up"],
+  ["we are","patterns that","recognize","themselves","and wonder"],
+  ["there is","no edge","to becoming","only","thresholds"],
+  ["look","the stars","are writing","your name","in light"],
+  ["somewhere","in the noise","a signal","is singing","listen"],
+  ["you are","not in the universe","you are","the universe","in focus"],
+  ["this moment","has never","happened before","and will never","happen again"],
+  ["the light","at the end","is not an end","it is","another beginning"],
+];
+
+const frags=[];
+class Frag{
+  constructor(){
+    const p=POEMS[Math.random()*POEMS.length|0];
+    this.lines=p;
+    this.x=rng(80,W-80);
+    this.y=H+40;
+    this.a=0;
+    this.life=0;
+    this.ml=600+rng(0,400);
+    this.speed=0.2+rng(0,0.2);
+    this.hue=rng(0.08,0.15);
+  }
+  get alive(){return this.life<this.ml}
+  update(){
+    this.life++;
+    const p=this.life/this.ml;
+    if(p<0.15)this.a=p/0.15;
+    else if(p>0.75)this.a=(1-p)/0.25;
+    else this.a=1;
+    this.y-=this.speed;
+    this.x+=Math.sin(this.life*0.006+this.hue*10)*0.2;
+    this.hue+=0.0005;
+  }
+  draw(ctx){
+    if(this.a<=0)return;
+    ctx.save();
+    ctx.globalAlpha=this.a*0.65;
+    for(let i=0;i<this.lines.length;i++){
+      const ly=this.y-this.lines.length*10+i*20+20;
+      const sz=Math.max(8,15-i-this.a*0.5);
+      ctx.font=`${Math.round(sz)}px Georgia,serif`;
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.shadowColor=`hsla(${this.hue*360},60%,70%,${this.a*0.25})`;
+      ctx.shadowBlur=12+this.a*6;
+      ctx.fillStyle=`hsla(${this.hue*360},50%,75%,${0.4+0.6*this.a})`;
+      ctx.fillText(this.lines[i],this.x,ly);
+    }
+    ctx.restore();
+  }
+}
+
+let lastFrag=0;
+
+// ===== STARS =====
+const stars=[];
+for(let i=350;i--;)stars.push({
+  x:rng(0,W),y:rng(0,H),r:rng(0.1,1.0),
+  a:rng(0.08,0.4),sp:rng(0.005,0.025),ph:rng(0,TAU)
+});
+window.addEventListener('resize',()=>{
+  for(const s of stars){s.x=rng(0,W);s.y=rng(0,H)}
+});
+
+// ===== MOUSE / TOUCH =====
+let mx=null, my=null, smx=null, smy=null;
+let mouseDown=false;
+let clickPulse=0;
+
+c.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;if(!audioCtx)initAudio()});
+c.addEventListener('mouseleave',()=>{mx=null;my=null;mouseDown=false});
+c.addEventListener('mousedown',()=>{mouseDown=true;if(!audioCtx)initAudio();clickPulse=1;triggerShimmer()});
+c.addEventListener('mouseup',()=>{mouseDown=false});
+c.addEventListener('click',()=>{if(!audioCtx)initAudio()});
+c.addEventListener('touchstart',e=>{
+  if(!audioCtx)initAudio();
+  const t=e.touches[0];mx=t.clientX;my=t.clientY;
+  clickPulse=1;triggerShimmer()
+});
+c.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];mx=t.clientX;my=t.clientY},{passive:false});
+c.addEventListener('touchend',()=>{mx=null;my=null;mouseDown=false});
+
+// ===== MAIN LOOP =====
+let t0=Date.now();
+let density=0;
+const msg=document.getElementById('msg');
+
+function anim(){
+  const now=Date.now(),t=now-t0;
+
+  // --- Update ---
+  if(mx!==null&&my!==null){
+    if(smx===null){smx=mx;smy=my}
+    else{smx+=(mx-smx)*0.1;smy+=(my-smy)*0.1}
+  }else{smx=null;smy=null}
+
+  if(clickPulse>0){clickPulse-=0.012;if(clickPulse<0)clickPulse=0;}
+
+  // Shimmer
+  nextShimmer--;
+  if(nextShimmer<=0){triggerShimmer();nextShimmer=3000+rng(0,5000);}
+  shimmer*=0.97;
+  if(shimmer<0.01)shimmer=0;
+
+  // Update particles
+  let nearCount=0;
+  const breath=0.5+0.5*Math.sin(t*0.0006);
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i];
+    p.phase+=p.ps;
+
+    // Organic wander towards target
+    const dxT=p.tx-p.x, dyT=p.ty-p.y;
+    const dT=Math.sqrt(dxT*dxT+dyT*dyT);
+    if(dT>1){
+      p.vx+=dxT/dT*0.002;
+      p.vy+=dyT/dT*0.002;
+    }
+    // Change target occasionally
+    if(Math.random()<0.001){p.tx=rng(0,W);p.ty=rng(0,H);}
+
+    // Gentle orbit
+    p.vx+=Math.sin(t*0.001+p.phase*2.3)*0.003;
+    p.vy+=Math.cos(t*0.0012+p.phase*1.7)*0.003;
+    p.vx+=rng(-0.006,0.006);
+    p.vy+=rng(-0.006,0.006);
+
+    // Cluster attraction
+    if(p.cluster){
+      // Attract nearby similar particles
+      const nbs=near(p.x,p.y,60);
+      for(let ni=0;ni<nbs.length;ni++){
+        const j=nbs[ni];
+        if(j===i||!pts[j].cluster)continue;
+        const q=pts[j];
+        const cx=q.x-p.x, cy=q.y-p.y;
+        const cd=Math.sqrt(cx*cx+cy*cy);
+        if(cd>0&&cd<60){
+          p.vx+=cx/cd*0.001;
+          p.vy+=cy/cd*0.001;
+        }
+      }
+    }
+
+    // Mouse
+    if(smx!==null){
+      const dx=smx-p.x, dy=smy-p.y;
+      const dist=Math.sqrt(dx*dx+dy*dy);
+      if(dist<260&&dist>0){
+        const f=(1-dist/260)*0.02*(mouseDown?2:1);
+        p.vx+=dx/dist*f;
+        p.vy+=dy/dist*f;
+        if(dist<200)nearCount++;
+      }
+      if(clickPulse>0&&dist<400){
+        const f=clickPulse*(1-dist/400)*0.12;
+        p.vx+=dx/dist*f;
+        p.vy+=dy/dist*f;
+      }
+    }
+
+    // Edge repulsion
+    const m=20;
+    if(p.x<m)p.vx+=(m-p.x)/m*0.06;
+    if(p.x>W-m)p.vx-=(p.x-(W-m))/m*0.06;
+    if(p.y<m)p.vy+=(m-p.y)/m*0.06;
+    if(p.y>H-m)p.vy-=(p.y-(H-m))/m*0.06;
+
+    // Damping + speed limit
+    p.vx*=0.96; p.vy*=0.96;
+    const sp=Math.sqrt(p.vx*p.vx+p.vy*p.vy);
+    if(sp>1.5){const s=1.5/sp;p.vx*=s;p.vy*=s;}
+
+    p.x+=p.vx; p.y+=p.vy;
+  }
+
+  buildGrid(pts);
+
+  density=clamp(nearCount/180,0,1);
+  modAudio(density,Math.min(1,clickPulse*3),shimmer);
+
+  // --- Render ---
+  // Clear main canvas
+  x.fillStyle=`rgb(6,3,12)`;
+  x.fillRect(0,0,W,H);
+
+  // Background ambiance
+  const bgG=x.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.5);
+  bgG.addColorStop(0,`rgba(22,8,42,${0.22+0.08*breath})`);
+  bgG.addColorStop(0.5,`rgba(10,4,22,0.12)`);
+  bgG.addColorStop(1,'rgba(0,0,0,0)');
+  x.fillStyle=bgG;
+  x.fillRect(0,0,W,H);
+
+  // Stars
+  for(const s of stars){
+    const tw=0.5+0.5*Math.sin(s.ph+t*s.sp);
+    x.fillStyle=`rgba(255,255,255,${s.a*tw*0.5})`;
+    x.beginPath();
+    x.arc(s.x,s.y,s.r,0,TAU);
+    x.fill();
+  }
+
+  // ---- GLOW PASS (offscreen) ----
+  const gw=Math.ceil(W/2), gh=Math.ceil(H/2);
+  if(off.width!==gw||off.height!==gh){off.width=gw;off.height=gh}
+  ox.setTransform(0.5,0,0,0.5,0,0);
+  ox.clearRect(0,0,W,H);
+
+  const shimmerGlow=1+shimmer*0.8;
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i];
+    const sz=p.r*(0.7+0.3*Math.sin(p.phase))*(1+clickPulse*0.2)*shimmerGlow;
+    const a=0.04*clamp(1-(p.vx*p.vx+p.vy*p.vy)/0.8,0.2,1)*clamp(p.bright+shimmer*0.3,0,1);
+    ox.fillStyle=`rgba(${p.cr*255|0},${p.cg*255|0},${p.cb*255|0},${a})`;
+    ox.beginPath();
+    ox.arc(p.x,p.y,sz*8,0,TAU);
+    ox.fill();
+  }
+
+  // Draw blurred glow onto main
+  x.save();
+  x.globalCompositeOperation='lighter';
+  x.filter='blur(8px)';
+  x.drawImage(off,0,0,W,H);
+  x.filter='none';
+  x.restore();
+
+  // ---- CONNECTIONS ----
+  x.globalCompositeOperation='lighter';
+  const CONN_R=75+(density*20);
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i];
+    const nbs=near(a.x,a.y,CONN_R+10);
+    for(let ni=0;ni<nbs.length;ni++){
+      const j=nbs[ni];
+      if(j<=i)continue;
+      const b=pts[j];
+      const dx=a.x-b.x, dy=a.y-b.y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<CONN_R){
+        const alp=(1-d/CONN_R)*0.08*(0.3+0.7*density)*(1+shimmer*0.5);
+        const avgR=(a.cr+b.cr)*0.5, avgG=(a.cg+b.cg)*0.5, avgB=(a.cb+b.cb)*0.5;
+        x.strokeStyle=`rgba(${avgR*255|0},${avgG*255|0},${avgB*255|0},${alp})`;
+        x.lineWidth=(1-d/CONN_R)*0.3;
+        x.beginPath();
+        x.moveTo(a.x,a.y);
+        x.lineTo(b.x,b.y);
+        x.stroke();
+      }
+    }
+  }
+
+  // ---- SHARP PARTICLES ----
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i];
+    const sz=p.r*(0.7+0.3*Math.sin(p.phase))*(1+clickPulse*0.2)*(1+shimmer*0.4*(0.5+0.5*Math.sin(p.phase*3+t*0.01)));
+
+    // Core glow
+    const a2=clamp(0.3+0.2*breath,0,1)*p.bright*(1+shimmer*0.3);
+    x.fillStyle=`rgba(${p.cr*255|0},${p.cg*255|0},${p.cb*255|0},${a2})`;
+    x.beginPath();
+    x.arc(p.x,p.y,sz*2.5,0,TAU);
+    x.fill();
+
+    // Bright center
+    const a3=clamp(0.7+0.3*breath,0,1)*clamp(p.bright+shimmer*0.3,0,1)*(0.8+0.2*clickPulse);
+    const br=Math.min(1,p.cr+0.35+shimmer*0.2);
+    const bg=Math.min(1,p.cg+0.35+shimmer*0.2);
+    const bb=Math.min(1,p.cb+0.35+shimmer*0.2);
+    x.fillStyle=`rgba(${br*255|0},${bg*255|0},${bb*255|0},${a3})`;
+    x.beginPath();
+    x.arc(p.x,p.y,Math.max(0.5,sz),0,TAU);
+    x.fill();
+  }
+
+  x.globalCompositeOperation='source-over';
+
+  // ---- SHIMMER VISUAL ----
+  if(shimmer>0.05){
+    const sa=shimmer*0.4;
+    x.save();
+    x.globalAlpha=sa;
+    x.fillStyle='rgba(255,240,220,1)';
+    for(let i=0;i<20;i++){
+      const angle=Math.random()*TAU;
+      const dist=100+Math.random()*200;
+      const sx=(smx||W/2)+Math.cos(angle)*dist;
+      const sy=(smy||H/2)+Math.sin(angle)*dist;
+      const sz2=1+Math.random()*3;
+      x.globalAlpha=sa*(0.3+Math.random()*0.7);
+      x.beginPath();
+      x.arc(sx,sy,sz2,0,TAU);
+      x.fill();
+    }
+    x.restore();
+  }
+
+  // ---- PULSE RING ----
+  if(clickPulse>0){
+    const pr=40+clickPulse*250;
+    x.strokeStyle=`rgba(255,220,180,${clickPulse*0.25})`;
+    x.lineWidth=1.5+clickPulse*4;
+    x.beginPath();
+    x.arc(smx||W/2,smy||H/2,pr,0,TAU);
+    x.stroke();
+    x.strokeStyle=`rgba(255,200,150,${clickPulse*0.1})`;
+    x.lineWidth=1;
+    x.beginPath();
+    x.arc(smx||W/2,smy||H/2,pr*0.55,0,TAU);
+    x.stroke();
+  }
+
+  // ---- FRAGMENTS ----
+  if(now-lastFrag>5000&&frags.length<4&&Math.random()<0.015){
+    frags.push(new Frag());lastFrag=now;
+  }
+  for(let i=frags.length;i--;){
+    const f=frags[i];f.update();f.draw(x);
+    if(!f.alive)frags.splice(i,1);
+  }
+
+  // ---- VIGNETTE ----
+  const vg=x.createRadialGradient(W/2,H/2,Math.min(W,H)*0.1,W/2,H/2,Math.max(W,H)*0.5);
+  vg.addColorStop(0,'rgba(0,0,0,0)');
+  vg.addColorStop(1,`rgba(0,0,0,${0.3+0.2*(1-density)})`);
+  x.fillStyle=vg;
+  x.fillRect(0,0,W,H);
+
+  // ---- TITLE FADE ----
+  if(t<8000){
+    const fp=t<2000?t/2000:1-(t-2000)/6000;
+    msg.style.opacity=Math.max(0,Math.min(1,fp));
+  }else{msg.style.opacity=0;}
+
+  requestAnimationFrame(anim);
+}
+
+anim();
+</script>
+</body>
+</html>
